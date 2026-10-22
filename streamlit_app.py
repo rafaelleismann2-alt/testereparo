@@ -1,39 +1,77 @@
 import streamlit as st
+import pandas as pd
+import os
 
-# Configuração da página do site para ocupar a tela inteira
+# Configuração da página do site para formato limpo de sistema
 st.set_page_config(page_title="Controle de Consertos Externos", layout="wide")
 
 st.title("🛠️ Painel de Consertos Externos")
-st.write("Dados atualizados em tempo real diretamente da Engenharia de Manutenção.")
-st.markdown("---")
+st.write("Dados atualizados em tempo real sincronizados com a Engenharia de Manutenção.")
 
-try:
-    # Puxa o link de incorporação configurado nos Secrets
-    url_embed = st.secrets["SHAREPOINT_URL"]
-    
-    # Adiciona comandos extras no link para forçar a Microsoft a esconder 
-    # botões de download, cabeçalhos de aba e barras de comando do Excel
-    if "wdHideGridlines" not in url_embed:
-        url_embed += "&wdHideGridlines=True&wdAllowInteractivity=True&wdHideHeaders=True&wdDownloadButton=False"
+# --- CONFIGURAÇÕES AUTOMÁTICAS TRAVADAS ---
+NOME_DO_ARQUIVO = "2025.Reparo_Externo - PCM.xlsx"
+NOME_DA_ABA_CERTA = "2026 - Conserto"  
+LINHA_DO_CABECALHO = 3  
 
-    # Estiliza o contêiner do site para cobrir o Excel com uma moldura limpa e moderna
-    st.markdown(
-        """
-        <style>
-        iframe {
-            border: 1px solid #4A4A4A !important;
-            border-radius: 8px !important;
-            box-shadow: 0px 4px 12px rgba(0, 0, 0, 0.1) !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-    
-    # Exibe os dados integrados sem correr risco de bloqueio 401
-    st.components.v1.iframe(url_embed, height=720, scrolling=True)
-    
-    st.success("✅ Painel conectado com sucesso e operando sem travas de rede!")
+@st.cache_data(ttl=10) # Atualiza quase instantaneamente a cada 10 segundos
+def carregar_dados_site():
+    if os.path.exists(NOME_DO_ARQUIVO):
+        try:
+            # Lê a planilha que o Power Automate envia automaticamente para o GitHub
+            df = pd.read_excel(
+                NOME_DO_ARQUIVO, 
+                sheet_name=NOME_DA_ABA_CERTA, 
+                header=LINHA_DO_CABECALHO, 
+                engine='openpyxl'
+            )
+            # Limpeza automática de colunas e linhas inteiramente vazias
+            df = df.dropna(how='all')
+            df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed:|^Unnamed')]
+            df.columns = [str(c).strip() for c in df.columns]
+            return df
+        except Exception as e:
+            st.error(f"Erro ao processar o arquivo de dados: {e}")
+            return None
+    else:
+        st.warning("⏱️ Aguardando a primeira sincronização de dados do Power Automate...")
+        return None
 
-except Exception as e:
-    st.error(f"Erro ao carregar o visualizador customizado: {e}")
+df = carregar_dados_site()
+
+# --- EXIBIÇÃO DA TABELA DINÂMICA DO SITE ---
+if df is not None and not df.empty:
+    st.markdown("---")
+    
+    # --- BARRA LATERAL COM FILTROS DO SITE ---
+    st.sidebar.header("🔍 Filtros Rápidos")
+    colunas = df.columns.tolist()
+    
+    # Tenta encontrar colunas de Status ou Situação automaticamente para criar os filtros dinâmicos
+    coluna_status = next((c for c in colunas if 'status' in str(c).lower() or 'situa' in str(c).lower() or 'retorno' in str(c).lower()), None)
+    if coluna_status:
+        status_sel = st.sidebar.multiselect(
+            f"Filtrar por {coluna_status}", 
+            options=df[coluna_status].dropna().unique(), 
+            default=df[coluna_status].dropna().unique()
+        )
+        df = df[df[coluna_status].isin(status_sel)]
+
+    # --- CARTÕES DE RESUMO ---
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(label="Total de Registros no Sistema", value=len(df))
+    with col2:
+        st.success("✅ Painel operando no formato de sistema nativo com sincronização automática!")
+
+    st.markdown("---")
+
+    # --- TABELA INTERATIVA DO SITE (SEM CARA DE EXCEL) ---
+    st.subheader("📋 Lista de Envios e Retornos")
+    df_exibicao = df.fillna("").astype(str)
+    
+    # Renderiza a tabela cinza e branca interativa e limpa do próprio Streamlit
+    st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
+    
+    if st.button("🔄 Atualizar Forçado"):
+        st.cache_data.clear()
+        st.rerun()
