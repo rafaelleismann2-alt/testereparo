@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import urllib.parse
 
 # Configuração da página do site
 st.set_page_config(page_title="Controle de Consertos Externos", layout="wide")
@@ -7,16 +8,31 @@ st.set_page_config(page_title="Controle de Consertos Externos", layout="wide")
 st.title("🛠️ Painel de Consertos Externos")
 st.write("Dados atualizados em tempo real diretamente do SharePoint da Engenharia de Manutenção.")
 
-# Carregar o arquivo enviado de forma segura
 @st.cache_data(ttl=60)
 def carregar_dados():
     try:
-        # Puxa as configurações seguras que faremos no painel do Streamlit
-        url_direta = st.secrets["SHAREPOINT_URL"]
+        # Puxa o link dos Secrets
+        url_original = st.secrets["SHAREPOINT_URL"]
+        
+        # Converte links de visualização/edição do SharePoint para link de download direto
+        if "doc2.aspx" in url_original or "guestfile.aspx" in url_original:
+            parsed_url = urllib.parse.urlparse(url_original)
+            query_params = urllib.parse.parse_qs(parsed_url.query)
+            sourcedoc = query_params.get("sourcedoc", [None])[0]
+            if sourcedoc:
+                # Reconstrói a URL apontando diretamente para o ID do documento puro
+                base_url = url_original.split("/_layouts/")[0]
+                url_direta = f"{base_url}/_layouts/15/download.aspx?share=1&sourcedoc={urllib.parse.quote(sourcedoc)}"
+            else:
+                url_direta = url_original
+        else:
+            url_direta = url_original
+
+        # Faz a leitura do arquivo Excel
         return pd.read_excel(url_direta, engine='openpyxl')
     except Exception as e:
-        st.error("Aguardando configuração de conexão segura com o SharePoint corporativo...")
-        st.info("Por favor, configure o link nas configurações de 'Secrets' no painel do Streamlit Cloud.")
+        st.error(f"Erro ao tentar ler o arquivo do SharePoint: {e}")
+        st.info("Verifique se o arquivo está compartilhado corretamente na rede da empresa.")
         return None
 
 df = carregar_dados()
