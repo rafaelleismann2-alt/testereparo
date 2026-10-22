@@ -1,26 +1,42 @@
 import streamlit as st
 import pandas as pd
-import os
+import requests
+import io
 
 # Configuração da página do site
 st.set_page_config(page_title="Controle de Consertos Externos", layout="wide")
 
 st.title("🛠️ Painel de Consertos Externos")
-st.write("Dados atualizados em tempo real sincronizados com a Engenharia de Manutenção.")
+st.write("Dados atualizados em tempo real diretamente do SharePoint da Engenharia de Manutenção.")
 
-# --- CONFIGURAÇÕES AUTOMÁTICAS TRAVADAS ---
-NOME_DO_ARQUIVO = "2025.Reparo_Externo - PCM.xlsx"  # Nome real da sua planilha
+# --- CONFIGURAÇÃO AUTOMÁTICA TRAVADAS ---
 NOME_DA_ABA_CERTA = "2026 - Conserto"  
 LINHA_DO_CABECALHO = 3  
 
-# Função para carregar o arquivo automático salvo no GitHub
-@st.cache_data(ttl=60)
-def carregar_dados_automaticos():
-    if os.path.exists(NOME_DO_ARQUIVO):
-        try:
+@st.cache_data(ttl=30) # Atualiza o site automaticamente a cada 30 segundos se houver mudanças
+def carregar_dados_sharepoint():
+    try:
+        # Puxa as credenciais seguras das configurações do Streamlit
+        link_original = st.secrets["SHAREPOINT_URL"]
+        token_acesso = st.secrets["MICROSOFT_TOKEN"]
+        
+        # Transforma a URL de visualização do navegador em um link de download direto de API
+        # Extrai os parâmetros necessários para autenticação automática de rede
+        if "sourcedoc=" in link_original:
+            doc_id = link_original.split("sourcedoc=")[1].split("&")[0]
+            base_url = link_original.split("/_layouts/")[0]
+            url_download = f"{base_url}/_layouts/15/download.aspx?sourcedoc={doc_id}"
+        else:
+            url_download = link_original
+
+        # Faz a requisição simulando o seu login do navegador de forma segura
+        headers = {"Authorization": f"Bearer {token_acesso}"}
+        resposta = requests.get(url_download, headers=headers)
+        
+        if resposta.status_code == 200:
             # Lê o Excel usando as configurações que deram certo no seu teste
             dados = pd.read_excel(
-                NOME_DO_ARQUIVO, 
+                io.BytesIO(resposta.content), 
                 sheet_name=NOME_DA_ABA_CERTA, 
                 header=LINHA_DO_CABECALHO, 
                 engine='openpyxl'
@@ -30,15 +46,16 @@ def carregar_dados_automaticos():
             dados = dados.loc[:, ~dados.columns.astype(str).str.contains('^Unnamed:|^Unnamed')]
             dados.columns = [str(c).strip() for c in dados.columns]
             return dados
-        except Exception as e:
-            st.error(f"Erro ao processar a planilha automática: {e}")
+        else:
+            st.error(f"Erro de Conexão Corporativa (Código HTTP {resposta.status_code}).")
+            st.info("💡 Como resolver: O token de acesso da Microsoft expirou ou precisa ser atualizado nos Secrets do site.")
             return None
-    else:
-        st.info(f"💡 Modo automático pendente: Por favor, faça o upload do arquivo com o nome exato '{NOME_DO_ARQUIVO}' dentro do seu GitHub!")
+    except Exception as e:
+        st.error(f"Erro ao processar a planilha do SharePoint: {e}")
         return None
 
-# Carrega os dados direto do arquivo do GitHub
-df = carregar_dados_automaticos()
+# Carrega os dados direto da nuvem da Microsoft
+df = carregar_dados_sharepoint()
 
 # --- ÁREA INTERATIVA DO SITE ---
 if df is not None and not df.empty:
@@ -48,7 +65,6 @@ if df is not None and not df.empty:
     st.sidebar.header("🔍 Filtros Rápidos")
     colunas_disponiveis = df.columns.tolist()
     
-    # Tenta encontrar colunas de Status, Situação ou Retorno para criar filtros na lateral
     coluna_status = next((c for c in colunas_disponiveis if 'status' in str(c).lower() or 'situa' in str(c).lower() or 'retorno' in str(c).lower()), None)
     if coluna_status:
         status_selecionado = st.sidebar.multiselect(
@@ -63,7 +79,7 @@ if df is not None and not df.empty:
     with col1:
         st.metric(label="Total de Registros Encontrados", value=len(df))
     with col2:
-        st.success("✅ Atualizado! Dados carregados automaticamente do arquivo do repositório.")
+        st.success("✅ Sincronizado! Dados carregados diretamente da nuvem em tempo real.")
 
     st.markdown("---")
 
@@ -72,7 +88,6 @@ if df is not None and not df.empty:
     df_exibicao = df.fillna("").astype(str)
     st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
     
-    # Botão para atualizar o cache caso mude o arquivo no GitHub
     if st.button("🔄 Atualizar Painel"):
         st.cache_data.clear()
         st.rerun()
