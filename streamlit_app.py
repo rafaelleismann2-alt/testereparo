@@ -16,29 +16,39 @@ arquivo_enviado = st.file_uploader(
 
 if arquivo_enviado is not None:
     try:
-        # Abre o Excel apenas para descobrir os nomes de todas as abas existentes
+        # Abre o Excel para ler as abas
         excel_file = pd.ExcelFile(arquivo_enviado, engine='openpyxl')
         abas_disponiveis = excel_file.sheet_names
         
-        # Cria um menu na tela para você escolher qual aba contém os consertos
         aba_selecionada = st.selectbox(
-            "📂 O Excel possui mais de uma aba. Selecione a aba correta com os seus dados de conserto:", 
+            "📂 Selecione a aba correta com os seus dados de conserto:", 
             options=abas_disponiveis,
             index=0
         )
         
-        # Controle manual caso a tabela não comece na linha 1
+        # Menu dinâmico para ajustar o cabeçalho caso os títulos fiquem estranhos
         linha_cabecalho = st.number_input(
-            "💡 Linha do cabeçalho (Aumente o número se as colunas ficarem com nomes estranhos):", 
+            "📏 Ajuste da linha dos títulos (Aumente ou diminua se as colunas não aparecerem certas):", 
             min_value=0, max_value=20, value=0, step=1
         )
 
-        # Carrega os dados da aba que você escolheu
-        df = pd.read_excel(arquivo_enviado, sheet_name=aba_selecionada, header=linha_cabecalho, engine='openpyxl')
+        # Carrega os dados tratando células mescladas e espaços em branco
+        df = pd.read_excel(
+            arquivo_enviado, 
+            sheet_name=aba_selecionada, 
+            header=linha_cabecalho, 
+            engine='openpyxl'
+        )
         
-        # Limpa linhas e colunas vazias
+        # --- LIMPEZA DE CABEÇALHO ---
+        # Remove espaços vazios do início e fim dos nomes das colunas
+        df.columns = [str(c).strip() for c in df.columns]
+        
+        # Filtra colunas falsas geradas por células mescladas ou vazias
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed:|^Unnamed')]
+        
+        # Remove linhas que estejam completamente vazias
         df = df.dropna(how='all')
-        df = df.loc[:, ~df.columns.str.contains('^Unnamed:')]
 
         if not df.empty:
             st.markdown("---")
@@ -47,7 +57,7 @@ if arquivo_enviado is not None:
             st.sidebar.header("🔍 Filtros Rápidos")
             colunas_disponiveis = df.columns.tolist()
             
-            # Tenta achar uma coluna de status automaticamente
+            # Identifica automaticamente se existe alguma coluna de Status/Situação
             coluna_status = next((c for c in colunas_disponiveis if 'status' in str(c).lower() or 'situa' in str(c).lower() or 'retorno' in str(c).lower()), None)
             if coluna_status:
                 status_selecionado = st.sidebar.multiselect(
@@ -60,20 +70,22 @@ if arquivo_enviado is not None:
             # --- CARTÕES DE RESUMO ---
             col1, col2 = st.columns(2)
             with col1:
-                st.metric(label="Total de Registros Carregados", value=len(df))
+                st.metric(label="Total de Registros Encontrados", value=len(df))
             with col2:
-                st.success("✅ Painel gerado com sucesso!")
+                st.success("✅ Cabeçalho alinhado! Use a barra de pesquisa ou clique no topo das colunas para ordenar.")
 
             st.markdown("---")
 
             # --- TABELA INTERATIVA PRINCIPAL ---
             st.subheader("📋 Lista de Envios e Retornos")
             
-            # Converte tudo para texto para exibição estável
-            df_exibicao = df.astype(str)
+            # Substitui valores nulos (NaN) por texto limpo para não poluir a tabela
+            df_exibicao = df.fillna("").astype(str)
+            
+            # Exibe a planilha de forma interativa
             st.dataframe(df_exibicao, use_container_width=True, hide_index=True)
         else:
-            st.warning("⚠️ Esta aba está vazia. Tente selecionar outra aba no menu acima.")
+            st.warning("⚠️ Nossos filtros limparam a tabela. Tente mudar o número da linha do cabeçalho acima.")
 
     except Exception as e:
         st.error(f"Erro ao processar o arquivo: {e}")
