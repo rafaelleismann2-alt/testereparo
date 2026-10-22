@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
+import json
 import io
 
 # Configuração da página do site
@@ -13,15 +14,28 @@ st.write("Dados atualizados em tempo real diretamente do SharePoint da Engenhari
 NOME_DA_ABA_CERTA = "2026 - Conserto"  
 LINHA_DO_CABECALHO = 3  
 
-@st.cache_data(ttl=30) # Atualiza o site automaticamente a cada 30 segundos se houver mudanças
+@st.cache_data(ttl=30)
 def carregar_dados_sharepoint():
     try:
-        # Puxa as credenciais seguras das configurações do Streamlit
         link_original = st.secrets["SHAREPOINT_URL"]
-        token_acesso = st.secrets["MICROSOFT_TOKEN"]
+        token_cru = st.secrets["MICROSOFT_TOKEN"]
         
-        # Transforma a URL de visualização do navegador em um link de download direto de API
-        # Extrai os parâmetros necessários para autenticação automática de rede
+        # --- LIMPADOR INTELIGENTE DE TOKEN ---
+        # Extrai apenas o segredo puro caso o usuário tenha colado o bloco JSON inteiro
+        token_limpo = token_cru.strip()
+        if token_limpo.startswith("{"):
+            try:
+                dados_json = json.loads(token_limpo)
+                token_acesso = dados_json.get("secret", token_limpo)
+            except:
+                token_acesso = token_limpo
+        else:
+            token_acesso = token_limpo
+            
+        # Remove quebras de linha ou espaços acidentais que travam o cabeçalho HTTP
+        token_acesso = "".join(token_acesso.split())
+
+        # Converte o link de visualização para o link de download direto da Microsoft
         if "sourcedoc=" in link_original:
             doc_id = link_original.split("sourcedoc=")[1].split("&")[0]
             base_url = link_original.split("/_layouts/")[0]
@@ -29,32 +43,30 @@ def carregar_dados_sharepoint():
         else:
             url_download = link_original
 
-        # Faz a requisição simulando o seu login do navegador de forma segura
+        # Faz a requisição simulando o seu login logado do navegador
         headers = {"Authorization": f"Bearer {token_acesso}"}
         resposta = requests.get(url_download, headers=headers)
         
         if resposta.status_code == 200:
-            # Lê o Excel usando as configurações que deram certo no seu teste
             dados = pd.read_excel(
                 io.BytesIO(resposta.content), 
                 sheet_name=NOME_DA_ABA_CERTA, 
                 header=LINHA_DO_CABECALHO, 
                 engine='openpyxl'
             )
-            # Limpeza automática de colunas e linhas inteiramente vazias
+            # Limpeza de linhas e colunas vazias
             dados = dados.dropna(how='all')
             dados = dados.loc[:, ~dados.columns.astype(str).str.contains('^Unnamed:|^Unnamed')]
             dados.columns = [str(c).strip() for c in dados.columns]
             return dados
         else:
             st.error(f"Erro de Conexão Corporativa (Código HTTP {resposta.status_code}).")
-            st.info("💡 Como resolver: O token de acesso da Microsoft expirou ou precisa ser atualizado nos Secrets do site.")
+            st.info("💡 Como resolver: O token de acesso da Microsoft expirou. Pegue um novo código atualizado no F12 do SharePoint e salve nos Secrets do site.")
             return None
     except Exception as e:
         st.error(f"Erro ao processar a planilha do SharePoint: {e}")
         return None
 
-# Carrega os dados direto da nuvem da Microsoft
 df = carregar_dados_sharepoint()
 
 # --- ÁREA INTERATIVA DO SITE ---
